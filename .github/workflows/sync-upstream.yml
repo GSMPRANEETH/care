@@ -1,0 +1,151 @@
+name: Sync with Upstream
+
+on:
+  # Run every hour
+  schedule:
+    - cron: '0 * * * *'
+
+  # Allow manual trigger
+  workflow_dispatch:
+    inputs:
+      branches:
+        description: >-
+          Branches to sync (comma-separated,
+          e.g., develop,staging,production)
+        required: false
+        default: 'develop,staging,production'
+
+jobs:
+  sync-upstream:
+    name: Sync with upstream repository
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Add upstream remote
+        run: |
+          git remote add upstream https://github.com/ohcnetwork/care.git || true
+          git remote -v
+
+      - name: Fetch upstream
+        run: |
+          echo "Fetching from upstream..."
+          git fetch upstream
+
+      - name: Determine branches to sync
+        id: branches
+        run: |
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            BRANCHES="${{ github.event.inputs.branches }}"
+          else
+            BRANCHES="develop,staging,production"
+          fi
+          echo "branches=$BRANCHES" >> $GITHUB_OUTPUT
+          echo "Will sync branches: $BRANCHES"
+
+      - name: Sync branches
+        env:
+          BRANCHES: ${{ steps.branches.outputs.branches }}
+        run: |
+          IFS=',' read -ra BRANCH_ARRAY <<< "$BRANCHES"
+
+          for branch in "${BRANCH_ARRAY[@]}"; do
+            branch=$(echo "$branch" | xargs)  # trim whitespace
+            echo "========================================="
+            echo "Processing branch: $branch"
+            echo "========================================="
+
+            # Check if branch exists locally
+            if git rev-parse --verify "$branch" >/dev/null 2>&1; then
+              echo "Branch $branch exists locally"
+            else
+              echo "Branch $branch does not exist locally, checking origin..."
+              if git ls-remote --heads origin "$branch" | grep -q "$branch"; then
+                echo "Creating local branch $branch from origin/$branch"
+                git branch "$branch" "origin/$branch"
+              else
+                echo "Branch $branch does not exist on origin, skipping..."
+                continue
+              fi
+            fi
+
+            # Check if branch exists on upstream
+            if ! git ls-remote --heads upstream "$branch" | \
+               grep -q "$branch"; then
+              echo "Branch $branch does not exist on upstream, skipping..."
+              continue
+            fi
+
+            # Checkout the branch
+            git checkout "$branch"
+
+            # Get current commit
+            CURRENT_COMMIT=$(git rev-parse HEAD)
+            UPSTREAM_COMMIT=$(git rev-parse upstream/$branch)
+
+            echo "Current commit: $CURRENT_COMMIT"
+            echo "Upstream commit: $UPSTREAM_COMMIT"
+
+            # Check if already up to date
+            if [ "$CURRENT_COMMIT" == "$UPSTREAM_COMMIT" ]; then
+              echo "Branch $branch is already up to date with upstream"
+              continue
+            fi
+
+            # Try to merge upstream changes
+            echo "Attempting to merge upstream/$branch into $branch..."
+
+            if git merge upstream/$branch --no-edit; then
+              echo "Successfully merged upstream/$branch into $branch"
+
+              # Push the changes
+              echo "Pushing changes to origin/$branch..."
+              if git push origin "$branch"; then
+                echo "Successfully pushed $branch to origin"
+                echo "✅ Branch $branch synced successfully!"
+              else
+                echo "❌ Failed to push $branch to origin"
+                exit 1
+              fi
+            else
+              echo "❌ Merge conflict detected in $branch"
+              echo "Aborting merge..."
+              git merge --abort
+
+              # Create an issue or comment about the conflict
+              echo "::warning::Merge conflict detected when syncing" \
+                   "branch $branch with upstream." \
+                   "Manual intervention required."
+
+              # Reset to original state
+              git reset --hard "$CURRENT_COMMIT"
+            fi
+          done
+
+          echo "========================================="
+          echo "Sync process completed!"
+          echo "========================================="
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "## Upstream Sync Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Sync process completed at $(date)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Upstream Repository:** ohcnetwork/care" \
+               >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Branches processed:**" \
+               "${{ steps.branches.outputs.branches }}" \
+               >> $GITHUB_STEP_SUMMARY

@@ -79,6 +79,16 @@ on [ghcr](https://github.com/ohcnetwork/care/pkgs/container/care)
 
 For backup and restore use [this](/docs/databases/backup.rst) documentation.
 
+## Staying in Sync with Upstream
+
+This repository is configured to automatically sync with the upstream [ohcnetwork/care](https://github.com/ohcnetwork/care) repository. 
+
+- **Automatic Sync**: Runs every hour to check for upstream updates
+- **Manual Sync**: Can be triggered from the Actions tab
+- **Branch Sync**: Syncs `develop`, `staging`, and `production` branches by default
+
+For more details, see [UPSTREAM_SYNC.md](./UPSTREAM_SYNC.md).
+
 ## Contributing
 
 We welcome contributions from everyone. Please read our [contributing guidelines](./CONTRIBUTING.md) to get started.
